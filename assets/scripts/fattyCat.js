@@ -27,7 +27,7 @@ var ROTATION_SPEED = 1000; //formerly tesla.rotSpeed
 var speed = -220;
 var placeBarrier = true;
 var barrierCounter = BARRIER_FREQUENCY;
-var gameOn = true;
+var gameOn = false;
 
 var clouds; //group for clouds
 var cloudTimer = 0;
@@ -65,10 +65,7 @@ function preload () {
     enableCrispRendering();
 }
 
-function createClouds () {
-    clouds = game.add.group();
-    cloudTimer = game.rnd.between(10, 60);
-}
+
 
 function create () {
     adjustGameScale();
@@ -84,7 +81,9 @@ function create () {
 }
 
 function update () {
+    handleClouds();
 
+    tesla.bringToTop();
 }
 
 function loadAssets () {
@@ -177,6 +176,7 @@ function startGame () {
     enableCatPhysics();
     flipCreditsVisibility();
     fsm = flap;
+    gameOn = true;
     resetInputState();
 }
 
@@ -196,4 +196,39 @@ function flipCreditsVisibility () {
 
 function flap () {
     console.log("Flap!");
+}
+
+function createClouds () {
+    clouds = game.add.group();
+    cloudTimer = game.rnd.between(10, 60);
+}
+
+function addCloud () {
+    cloudTimer = game.rnd.between(10, 30);
+    var cloud = clouds.getFirstExists(false);
+    if (!cloud) {
+        cloud = game.add.sprite(0, 0, "Cloud");
+    }
+    cloud.reset (SCREEN_WIDTH * 1.5, game.rnd.between(10, 750));
+
+    game.physics.enable(cloud, Phaser.Physics.ARCADE);
+    cloud.anchor.setTo(1, 0);
+    var cloudSize = game.rnd.realInRange(0.6, 1.5);
+    cloud.scale.setTo(cloudSize);
+    cloud.body.velocity.x = -cloudSize * 100 - 200;
+    cloud.sendToBack();
+    clouds.add(cloud);
+}
+
+function handleClouds () {
+    cloudTimer--;
+    if(cloudTimer <= 0 && gameOn) {
+        addCloud();
+    }
+
+    clouds.forEach(function (cloud) {
+        if (cloud.x < 0) {
+            cloud.kill(); //remove invisible clouds
+        }
+    });
 }
