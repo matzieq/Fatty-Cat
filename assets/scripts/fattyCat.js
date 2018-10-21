@@ -8,12 +8,13 @@ var SCREEN_WIDTH = 480;
 var SCREEN_HEIGHT = 800;
 var BARRIER_GAP = 220;
 var BARRIER_FREQUENCY = 100;
+var BARRIER_START_X = 600;
 
 var CAT_START_X = 96;
 var CAT_START_Y = 256;
 
 var GRAVITY = 1500;
-var JUMP_STRENGTH = -600;
+var JUMP_FORCE = -600;
 var CAT_SCALE = 1;
 
 var HIGH_SCORE_COLOR = 0xFF0000;
@@ -50,9 +51,9 @@ var highScore = 0;
 var fattyCatSavedScore;
 var localStorageName = "fatty_cat_high_score";
 
-var meowCounter = 0; //meows
+var meowTimer = 0; //meows
 
-var meowSounds;
+var meows;
 var hitSound;
 var flapSound;
 
@@ -64,9 +65,9 @@ var fsm = startGame; //finite state machine
 
 var downRotation; //tween
 var flapRotation; //tween
-var hitRotation //tween
+var hitRotation; //tween
 
-var game = new Phaser.Game(SCREEN_WIDTH, SCREEN_HEIGHT, Phaser.AUTO, "fatty-cat",
+var game = new Phaser.Game(SCREEN_WIDTH, SCREEN_HEIGHT, Phaser.CANVAS, "fatty-cat",
     {preload: preload, create: create, update: update});
 
 
@@ -103,6 +104,7 @@ function update () {
     handleClouds();
     handleBarriers();
     handleCollisions();
+    makeNoise();
     bringThingsToTop();
 }
 
@@ -138,7 +140,7 @@ function adjustGameScale () {
 }
 
 function initializeAudio () {
-    meowSounds = [
+    meows = [
         game.add.audio("meow1"),
         game.add.audio("meow2"),
         game.add.audio("meow3"),
@@ -209,11 +211,13 @@ function resetInputState () {
 }
 
 function startGame () {
+    highScoreDisplay.text = "";
     barrierCounter = BARRIER_FREQUENCY;
+    gameOn = true;
+    fsm = flap;
+
     enableCatPhysics();
     disableCredits();
-    fsm = flap;
-    gameOn = true;
     resetInputState();
     rotateTowardsBottom();
     flap();
@@ -221,22 +225,32 @@ function startGame () {
 
 function restartGame () {
     if (tesla.y > SCREEN_HEIGHT) {
-        hitRotation.stop();
-        tesla.reset(CAT_START_X, CAT_START_Y);
-        barriers.topBarriers.forEach(function(item) {
-            item.kill();
-            item.x = 600;
-        });
-        barriers.bottomBarriers.forEach(function(item) {
-            item.kill();
-            item.x = 600;
-        });
-        clouds.forEach(function(item) {
-            item.kill();
-            item.x = 600;
-        });
+        score = -0.5; //because the adjustScore function adds 0.5 to score, and we want to reset it to zero
+        adjustScore();
+        destroyEverything();
+        resetCat();
         startGame();
     }
+}
+
+function resetCat () {
+    hitRotation.stop();
+    tesla.reset(CAT_START_X, CAT_START_Y);
+}
+
+function destroyEverything () {
+    barriers.topBarriers.forEach(function(item) {
+        item.kill();
+        item.x = BARRIER_START_X;
+    });
+    barriers.bottomBarriers.forEach(function(item) {
+        item.kill();
+        item.x = BARRIER_START_X;
+    });
+    clouds.forEach(function(item) {
+        item.kill();
+        item.x = BARRIER_START_X;
+    });
 }
 
 function enableCatPhysics () {  
@@ -256,7 +270,7 @@ function disableCredits () {
 function flap () {
     if(gameOn) {
         flapSound.play();
-        tesla.body.velocity.y = JUMP_STRENGTH; //just some vertical velocity to counteract gravity
+        tesla.body.velocity.y = JUMP_FORCE; //just some vertical velocity to counteract gravity
         tesla.angle = -50;
         rotateTowardsBottom();
     }
@@ -321,7 +335,7 @@ function handleBarriers () {
 function killBarrierIfOutsideScreen(barrier) {
     if (barrier.x < 0) {
         barrier.kill();
-        barrier.x = 600;
+        barrier.x = BARRIER_START_X;
         adjustScore();
     }
 }
@@ -348,7 +362,7 @@ function createTopBarrier (posY) {
         topBarrier.body.immovable = true; //we do not want tesla to move the barriers when hitting them
         barriers.topBarriers.add(topBarrier);
     }
-    topBarrier.reset(600, posY); //place outside the screen to the right
+    topBarrier.reset(BARRIER_START_X, posY); //place outside the screen to the right
     topBarrier.body.velocity.x = speed;
     topBarrier.bringToTop();
 }
@@ -367,7 +381,7 @@ function createBottomBarrier (posY) {
         barriers.bottomBarriers.add(bottomBarrier);
     }
     
-    bottomBarrier.reset(600, posY - bottomBarrier.height + BARRIER_GAP); //the lower barrier must leave a gap between both of them
+    bottomBarrier.reset(BARRIER_START_X, posY - bottomBarrier.height + BARRIER_GAP); //the lower barrier must leave a gap between both of them
     bottomBarrier.body.velocity.x = speed; 
     bottomBarrier.bringToTop();
 
@@ -375,26 +389,35 @@ function createBottomBarrier (posY) {
 
 function handleCollisions () {
     if (gameOn) {
-        highScoreDisplay.text = "";
-        game.physics.arcade.collide(tesla, barriers.topBarriers, null, hitSomething, this);
-        game.physics.arcade.collide(tesla, barriers.bottomBarriers, null, hitSomething, this);
+        game.physics.arcade.collide(tesla, barriers.topBarriers, null, loseGame, this);
+        game.physics.arcade.collide(tesla, barriers.bottomBarriers, null, loseGame, this);
         if (tesla.y > game.height - tesla.height) {
-            hitSomething();
+            loseGame();
         }
     }
 }
 
-function hitSomething () {
-    for(var i = 0; i < meowSounds.length; i++) {
-        meowSounds[i].stop();
-    }
+function loseGame () {
+    stopTheDamnNoise();
     hitSound.play();
-    meowSounds[0].play();
-
+    meows[0].play();
     stopMoving(barriers.topBarriers);
     stopMoving(barriers.bottomBarriers);
     stopMoving(clouds);
-    
+    fallOffScreen();
+    gameOn = false;
+    fsm = restartGame;
+    resetInputState();
+    saveHighScore();
+}
+
+function stopTheDamnNoise () {
+    for(var i = 0; i < meows.length; i++) {
+        meows[i].stop();
+    }
+}
+
+function fallOffScreen () {
     tesla.body.collideWorldBounds = false; //now we can let her fall of the screen
     downRotation.stop(); //stop normal tween and add the flipping back gameover tween
     hitRotation = game.add.tween(tesla).to({
@@ -402,10 +425,6 @@ function hitSomething () {
         y: 800,
         angle: -180
     }, 500, "Linear", true);
-    gameOn = false;
-    fsm = restartGame;
-    resetInputState();
-    saveHighScore();
 }
 
 function saveHighScore () {
@@ -420,6 +439,19 @@ function stopMoving (group) {
     group.forEach(function(item) {
         item.body.velocity.x = 0;
     });
+}
+
+function makeNoise () {
+    if (gameOn) {
+        meowTimer--;
+        if(meowTimer <= 0) {
+            meowTimer = game.rnd.between(20, 100);
+            var randomSound = game.rnd.between(0, meows.length - 1);
+            if(!meows[randomSound].isPlaying) {
+                meows[randomSound].play();
+            }
+        }
+    }
 }
 
 function bringThingsToTop () {
