@@ -88,13 +88,13 @@ function create () {
     adjustGameScale();
     initializeAudio();
     loadHighScore();
-    displayHighScore();
-    displayScore();
     displayTitleText();
     createCat();
     createClouds();
     createBarriers();
     initializeInput();
+    displayHighScore();
+    displayScore();
 
 }
 
