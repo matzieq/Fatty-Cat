@@ -7,11 +7,13 @@
 var SCREEN_WIDTH = 480;
 var SCREEN_HEIGHT = 800;
 var BARRIER_GAP = 220;
-var BARRIER_FREQUENCY = 78;
+var BARRIER_FREQUENCY = 100;
 
+var CAT_START_X = 96;
+var CAT_START_Y = 256;
 
 var GRAVITY = 1500;
-var JUMP_STRENTH = -600;
+var JUMP_STRENGTH = -600;
 var CAT_SCALE = 1;
 
 var HIGH_SCORE_COLOR = 0xFF0000;
@@ -25,12 +27,19 @@ var ROTATION_SPEED = 1000; //formerly tesla.rotSpeed
 \***********/
 
 var speed = -220;
-var placeBarrier = true;
+var placeBarrier = false;
 var barrierCounter = BARRIER_FREQUENCY;
 var gameOn = false;
 
 var clouds; //group for clouds
 var cloudTimer = 0;
+
+var barriers = {
+    "topBarriers": null,
+    "bottomBarriers": null,
+}; //group for barriers
+var placeBarrier = true;
+var barrierTimer = BARRIER_FREQUENCY;
 
 var tesla; //the name of my cat
 
@@ -45,6 +54,7 @@ var meowCounter = 0; //meows
 
 var meowSounds;
 var hitSound;
+var flapSound;
 
 var titleText = {};
 var highScoreDisplay;
@@ -52,8 +62,14 @@ var scoreDisplay;
 
 var fsm = startGame; //finite state machine
 
+var downRotation; //tween
+var flapRotation; //tween
+var hitRotation //tween
+
 var game = new Phaser.Game(SCREEN_WIDTH, SCREEN_HEIGHT, Phaser.AUTO, "fatty-cat",
     {preload: preload, create: create, update: update});
+
+
 
 
 /******\
@@ -65,7 +81,81 @@ function preload () {
     enableCrispRendering();
 }
 
+function createBarriers () {
+    barriers.topBarriers = game.add.group();
+    barriers.bottomBarriers = game.add.group();
+}
 
+function handleBarriers () {
+    if (gameOn) {
+        barrierTimer--;
+    }
+    if (barrierTimer <= 0) {
+        barrierTimer = BARRIER_FREQUENCY;
+        placeBarrier = true;
+    }
+    if(placeBarrier && gameOn) { //if barrier is to be placed and the game is still going
+        placeBarrier = false; //this should run only once
+        addBarrier();
+    }
+    barriers.topBarriers.forEach(killBarrierIfOutsideScreen);
+    barriers.bottomBarriers.forEach(killBarrierIfOutsideScreen);
+}
+
+function killBarrierIfOutsideScreen(barrier) {
+    if (barrier.x < 0) {
+        barrier.kill();
+        barrier.x = 600;
+        adjustScore();
+    }
+}
+
+function adjustScore () {
+    score += 0.5;
+    scoreDisplay.text = Math.ceil(score).toString();
+}
+
+function addBarrier () {
+    var posY = game.rnd.between(20, SCREEN_HEIGHT - BARRIER_GAP - 20); //the gap starts min. 20px from the top and max. 20 px from the bottom of the screen
+    createTopBarrier(posY);
+    createBottomBarrier(posY); 
+}
+
+function createTopBarrier (posY) {
+    var topBarrier = barriers.topBarriers.getFirstExists(false);
+    
+    if (!topBarrier) {
+        topBarrier = game.add.sprite(0, 0, "Barrier");
+        game.physics.enable(topBarrier, Phaser.Physics.ARCADE);
+        topBarrier.body.setSize(topBarrier.width, topBarrier.height - 10);
+        topBarrier.anchor.setTo(1);
+        topBarrier.body.immovable = true; //we do not want tesla to move the barriers when hitting them
+        barriers.topBarriers.add(topBarrier);
+    }
+    topBarrier.reset(600, posY); //place outside the screen to the right
+    topBarrier.body.velocity.x = speed;
+    topBarrier.bringToTop();
+}
+
+function createBottomBarrier (posY) {
+    var bottomBarrier = barriers.bottomBarriers.getFirstExists(false);
+
+    if (!bottomBarrier) {
+        console.log("Created!");
+        bottomBarrier = game.add.sprite(0, 0, "Barrier");
+        game.physics.enable(bottomBarrier, Phaser.Physics.ARCADE);
+        bottomBarrier.scale.y = -1;
+        //bottomBarrier.body.setSize(bottomBarrier.width, bottomBarrier.height);
+        bottomBarrier.anchor.setTo(1, 0);
+        bottomBarrier.body.immovable = true;
+        barriers.bottomBarriers.add(bottomBarrier);
+    }
+    
+    bottomBarrier.reset(600, posY - bottomBarrier.height + BARRIER_GAP); //the lower barrier must leave a gap between both of them
+    bottomBarrier.body.velocity.x = speed; 
+    bottomBarrier.bringToTop();
+
+}
 
 function create () {
     adjustGameScale();
@@ -76,14 +166,71 @@ function create () {
     displayTitleText();
     createCat();
     createClouds();
+    createBarriers();
     initializeInput();
 
 }
 
+function handleCollisions () {
+    if (gameOn) {
+        highScoreDisplay.text = "";
+        game.physics.arcade.collide(tesla, barriers.topBarriers, null, hitSomething, this);
+        game.physics.arcade.collide(tesla, barriers.bottomBarriers, null, hitSomething, this);
+        if (tesla.y > game.height - tesla.height) {
+            hitSomething();
+        }
+    }
+}
+
+function hitSomething () {
+    for(var i = 0; i < meowSounds.length; i++) {
+        meowSounds[i].stop();
+    }
+    hitSound.play();
+    meowSounds[0].play();
+
+    stopMoving(barriers.topBarriers);
+    stopMoving(barriers.bottomBarriers);
+    stopMoving(clouds);
+    
+    tesla.body.collideWorldBounds = false; //now we can let her fall of the screen
+    downRotation.stop(); //stop normal tween and add the flipping back gameover tween
+    hitRotation = game.add.tween(tesla).to({
+        x: tesla.x - tesla.width/2,
+        y: 800,
+        angle: -180
+    }, 500, "Linear", true);
+    gameOn = false;
+    fsm = restartGame;
+    resetInputState();
+    saveHighScore();
+}
+
+function saveHighScore () {
+    highScore = Math.max(score, savedScore.score);
+    localStorage.setItem(localStorageName, JSON.stringify({
+        score: highScore
+    }));
+    highScoreDisplay.text = highScore.toString();
+}
+
+function stopMoving (group) {
+    group.forEach(function(item) {
+        item.body.velocity.x = 0;
+    });
+}
+
+function bringThingsToTop () {
+    tesla.bringToTop();
+    scoreDisplay.bringToTop();
+    highScoreDisplay.bringToTop();
+}
+
 function update () {
     handleClouds();
-
-    tesla.bringToTop();
+    handleBarriers();
+    handleCollisions();
+    bringThingsToTop();
 }
 
 function loadAssets () {
@@ -122,7 +269,9 @@ function initializeAudio () {
         game.add.audio("meow5"),
         game.add.audio("meow6"),
     ];
+
     hitSound = game.add.audio("hit");
+    flapSound = game.add.audio("flap");
 }
 
 function loadHighScore () {
@@ -152,7 +301,7 @@ function displayTitleText () {
 }
 
 function createCat () {
-    tesla = game.add.sprite(96, 256, "Tesla");
+    tesla = game.add.sprite(CAT_START_X, CAT_START_Y, "Tesla");
     tesla.anchor.setTo(0.5);
     tesla.scale.setTo(CAT_SCALE);
 
@@ -173,11 +322,34 @@ function resetInputState () {
 }
 
 function startGame () {
+    barrierCounter = BARRIER_FREQUENCY;
     enableCatPhysics();
     flipCreditsVisibility();
     fsm = flap;
     gameOn = true;
     resetInputState();
+    rotateTowardsBottom();
+    flap();
+}
+
+function restartGame () {
+    if (tesla.y > SCREEN_HEIGHT) {
+        hitRotation.stop();
+        tesla.reset(CAT_START_X, CAT_START_Y);
+        barriers.topBarriers.forEach(function(item) {
+            item.kill();
+            item.x = 600;
+        });
+        barriers.bottomBarriers.forEach(function(item) {
+            item.kill();
+            item.x = 600;
+        });
+        clouds.forEach(function(item) {
+            item.kill();
+            item.x = 600;
+        });
+        startGame();
+    }
 }
 
 function enableCatPhysics () {  
@@ -195,8 +367,23 @@ function flipCreditsVisibility () {
 }
 
 function flap () {
+    if(gameOn) {
+        flapSound.play();
+        tesla.body.velocity.y = JUMP_STRENGTH; //just some vertical velocity to counteract gravity
+        tesla.angle = -50;
+        rotateTowardsBottom();
+    } else {
+        // if (tesla.y > 800) {
+        //     gameOn = true;
+        //     score = 0;
+        //     placeBarrier = true;
+        //     barrierCounter = BARRIER_FREQUENCY;
+        //     this.state.start(this.state.current); 
+        //}
+    }
     console.log("Flap!");
 }
+
 
 function createClouds () {
     clouds = game.add.group();
@@ -205,7 +392,9 @@ function createClouds () {
 
 function addCloud () {
     cloudTimer = game.rnd.between(10, 30);
+
     var cloud = clouds.getFirstExists(false);
+
     if (!cloud) {
         cloud = game.add.sprite(0, 0, "Cloud");
     }
@@ -221,9 +410,11 @@ function addCloud () {
 }
 
 function handleClouds () {
-    cloudTimer--;
-    if(cloudTimer <= 0 && gameOn) {
-        addCloud();
+    if (gameOn) {
+        cloudTimer--;
+        if(cloudTimer <= 0) {
+            addCloud();
+        }
     }
 
     clouds.forEach(function (cloud) {
@@ -231,4 +422,10 @@ function handleClouds () {
             cloud.kill(); //remove invisible clouds
         }
     });
+}
+
+function rotateTowardsBottom() {
+    downRotation = game.add.tween(tesla).to({ //diving tween
+            angle: 50
+    }, ROTATION_SPEED, "Linear", true);
 }
